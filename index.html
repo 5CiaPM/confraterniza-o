@@ -240,7 +240,7 @@ let dados = [];          // lista atual vinda do Firestore
 let unsub = null;
 let seeded = false;
 let unsubCfg = null;
-let valores = { adulto: 0, crianca6a12: 0, crianca5: 0 };   // em reais, por pessoa
+let valores = { adulto: 110, crianca6a12: 55, crianca5: 0 };   // em reais, por pessoa
 
 const brl = c => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 // tudo em centavos para evitar erro de arredondamento
@@ -268,8 +268,9 @@ function iniciar(){
   if (unsub) return;
   unsubCfg = onSnapshot(doc(db, COLECAO_CFG, "valores"), s => {
     if (s.exists()) valores = { ...valores, ...s.data() };
+    else setDoc(doc(db, COLECAO_CFG, "valores"), valores).catch(() => {});   // grava os valores iniciais na 1ª vez
     [["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
-      if (document.activeElement !== $(id)) $(id).value = valores[k] ? valores[k] : "";
+      if (document.activeElement !== $(id)) $(id).value = valores[k] ?? "";
     });
     render();
   }, err => { $("status").textContent = "Erro ao ler valores: " + err.code + " (atualize as regras do Firestore)"; });
