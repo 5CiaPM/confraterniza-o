@@ -18,6 +18,9 @@ service cloud.firestore {
     match /festa_fim_de_ano_participantes/{doc} {
       allow read, write: if request.auth != null;
     }
+    match /festa_fim_de_ano_config/{doc} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
 ```
@@ -37,4 +40,6 @@ service cloud.firestore {
 - No primeiro acesso, o sistema cadastra sozinho os 64 policiais da lista no Firestore.
 - **Participantes**: preencha adultos, crianças de 6 a 12 e crianças até 5 anos. Salva automaticamente.
 - **Pagamentos**: toque em "Pendente" para marcar a parcela como "Pago" (toque de novo para desfazer).
+- **Valores por pessoa**: no painel "Valores por pessoa" informe o valor do adulto, da criança de 6 a 12 e da criança até 5 anos. O total de cada policial é dividido em 3 parcelas iguais e o indicador de **arrecadado / a receber** (com barra de progresso) é atualizado a cada parcela marcada como paga.
+- **Exportar PDF**: o botão no topo gera um PDF com a lista de participantes (página 1) e os pagamentos com saldo (página 2).
 - O campo de busca filtra as duas abas; os cartões do topo mostram os totais.

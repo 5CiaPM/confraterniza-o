@@ -47,7 +47,21 @@
   .login .btn{width:100%}
   .err{color:var(--warn);font-size:.85rem;min-height:1.2em;margin-top:8px}
   .status{font-size:.78rem;opacity:.85}
+  .btn.pdf{background:#fff;color:var(--brand);font-weight:600}
+  .hbtns{display:flex;gap:8px}
+  .cfg{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .cfg summary{cursor:pointer;font-weight:600}
+  .cfgrow{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+  .cfgrow label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;color:var(--muted)}
+  .cfgrow input{width:130px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+  .hint{color:var(--muted);font-size:.8rem;margin:8px 0 0}
+  .money b{color:var(--ok)}
+  .bar{height:12px;border-radius:999px;background:var(--line);overflow:hidden;margin:6px 0 4px}
+  #barFill{height:100%;width:0;background:var(--ok);transition:width .3s}
+  #tab-pagamentos table{min-width:700px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 
@@ -65,13 +79,26 @@
 <div id="appView" class="hidden">
   <header>
     <h1>🎄 Festa de Fim de Ano – 5ª Cia PM<small id="status" class="status">Conectando…</small></h1>
-    <button class="btn ghost" id="btnSair">Sair</button>
+    <div class="hbtns">
+      <button class="btn pdf" id="btnPdf">📄 Exportar PDF</button>
+      <button class="btn ghost" id="btnSair">Sair</button>
+    </div>
   </header>
   <main>
     <div class="tabs">
       <button class="tab active" data-tab="participantes">Participantes</button>
       <button class="tab" data-tab="pagamentos">Pagamentos</button>
     </div>
+
+    <details class="cfg">
+      <summary>💰 Valores por pessoa</summary>
+      <div class="cfgrow">
+        <label>Adulto (R$)<input id="vAdulto" type="number" min="0" step="0.01" inputmode="decimal"></label>
+        <label>Criança 6 a 12 (R$)<input id="vC612" type="number" min="0" step="0.01" inputmode="decimal"></label>
+        <label>Criança até 5 (R$)<input id="vC5" type="number" min="0" step="0.01" inputmode="decimal"></label>
+      </div>
+      <p class="hint">O total de cada policial é dividido em 3 parcelas iguais. Considere o próprio policial no campo "Adultos".</p>
+    </details>
 
     <input class="search" id="busca" type="search" placeholder="Buscar policial…">
 
@@ -85,7 +112,7 @@
       </div>
       <div class="wrap">
         <table>
-          <thead><tr><th>Policial</th><th class="num">Adultos</th><th class="num">Crianças 6 a 12</th><th class="num">Crianças até 5</th></tr></thead>
+          <thead><tr><th>Policial</th><th class="num">Adultos</th><th class="num">Crianças 6 a 12</th><th class="num">Crianças até 5</th><th class="num">Total devido</th></tr></thead>
           <tbody id="bodyPart"></tbody>
         </table>
       </div>
@@ -98,10 +125,17 @@
         <div class="stat"><b id="p2">0</b><span>2ª parcela pagas</span></div>
         <div class="stat"><b id="p3">0</b><span>3ª parcela pagas</span></div>
         <div class="stat"><b id="quit">0</b><span>Quitados (3/3)</span></div>
+        <div class="stat money"><b id="mArrec">R$ 0,00</b><span>Arrecadado</span></div>
+        <div class="stat"><b id="mAberto">R$ 0,00</b><span>A receber</span></div>
+        <div class="stat"><b id="mPrev">R$ 0,00</b><span>Total previsto</span></div>
+        <div class="stat" style="grid-column:1/-1">
+          <div class="bar"><div id="barFill"></div></div>
+          <span id="pct">0% arrecadado</span>
+        </div>
       </div>
       <div class="wrap">
         <table>
-          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th></tr></thead>
+          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th><th class="num">Total</th><th class="num">Saldo</th></tr></thead>
           <tbody id="bodyPag"></tbody>
         </table>
       </div>
@@ -112,7 +146,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, updateDoc, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ====== COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE ====== */
 const firebaseConfig = {
@@ -126,6 +160,7 @@ const firebaseConfig = {
 /* =============================================================== */
 
 const COLECAO = "festa_fim_de_ano_participantes";
+const COLECAO_CFG = "festa_fim_de_ano_config";
 
 const EFETIVO = [
 ["CAP PM","JOSEMAR DE PAULA"],
@@ -204,13 +239,21 @@ const db = getFirestore(app);
 let dados = [];          // lista atual vinda do Firestore
 let unsub = null;
 let seeded = false;
+let unsubCfg = null;
+let valores = { adulto: 0, crianca6a12: 0, crianca5: 0 };   // em reais, por pessoa
+
+const brl = c => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// tudo em centavos para evitar erro de arredondamento
+const totalCent = p => Math.round(((Number(p.adultos) || 0) * valores.adulto + (Number(p.criancas6a12) || 0) * valores.crianca6a12 + (Number(p.criancasAte5) || 0) * valores.crianca5) * 100);
+const parcelasCent = p => { const t = totalCent(p), b = Math.floor(t / 3); return [b, b, t - 2 * b]; };
+const pagoCent = p => { const pc = parcelasCent(p); return (p.parcela1 ? pc[0] : 0) + (p.parcela2 ? pc[1] : 0) + (p.parcela3 ? pc[2] : 0); };
 const timers = {};
 
 /* ---------- Login ---------- */
 onAuthStateChanged(auth, user => {
   $("loginView").classList.toggle("hidden", !!user);
   $("appView").classList.toggle("hidden", !user);
-  if (user) iniciar(); else if (unsub) { unsub(); unsub = null; }
+  if (user) iniciar(); else { if (unsub) { unsub(); unsub = null; } if (unsubCfg) { unsubCfg(); unsubCfg = null; } }
 });
 $("btnLogin").onclick = async () => {
   $("loginErr").textContent = "";
@@ -223,6 +266,13 @@ $("btnSair").onclick = () => signOut(auth);
 /* ---------- Dados ---------- */
 function iniciar(){
   if (unsub) return;
+  unsubCfg = onSnapshot(doc(db, COLECAO_CFG, "valores"), s => {
+    if (s.exists()) valores = { ...valores, ...s.data() };
+    [["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
+      if (document.activeElement !== $(id)) $(id).value = valores[k] ? valores[k] : "";
+    });
+    render();
+  }, err => { $("status").textContent = "Erro ao ler valores: " + err.code + " (atualize as regras do Firestore)"; });
   unsub = onSnapshot(collection(db, COLECAO), async snap => {
     if (snap.empty && !seeded) { seeded = true; await semear(); return; }
     dados = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => a.ordem - b.ordem);
@@ -267,6 +317,14 @@ function render(){
   $("p2").textContent = dados.filter(p => p.parcela2).length;
   $("p3").textContent = dados.filter(p => p.parcela3).length;
   $("quit").textContent = dados.filter(p => p.parcela1 && p.parcela2 && p.parcela3).length;
+  const prev = dados.reduce((s, p) => s + totalCent(p), 0);
+  const arr = dados.reduce((s, p) => s + pagoCent(p), 0);
+  $("mPrev").textContent = brl(prev);
+  $("mArrec").textContent = brl(arr);
+  $("mAberto").textContent = brl(prev - arr);
+  const pct = prev ? Math.round(arr / prev * 100) : 0;
+  $("barFill").style.width = pct + "%";
+  $("pct").textContent = pct + "% arrecadado";
 
   // não re-renderiza se o usuário está digitando num campo da aba participantes
   const foco = document.activeElement;
@@ -278,6 +336,7 @@ function render(){
         <td><span class="posto">${p.posto}</span>${p.nome}</td>
         ${["adultos","criancas6a12","criancasAte5"].map(c =>
           `<td class="num"><input type="number" min="0" max="20" inputmode="numeric" value="${p[c] || 0}" data-id="${p.id}" data-campo="${c}"></td>`).join("")}
+        <td class="num">${brl(totalCent(p))}</td>
       </tr>`).join("");
   }
 
@@ -285,7 +344,9 @@ function render(){
     <tr>
       <td><span class="posto">${p.posto}</span>${p.nome}</td>
       ${[1,2,3].map(n =>
-        `<td class="num"><button class="pay ${p["parcela"+n] ? "on" : ""}" data-id="${p.id}" data-parcela="parcela${n}">${p["parcela"+n] ? "✔ Pago" : "Pendente"}</button></td>`).join("")}
+        `<td class="num"><button class="pay ${p["parcela"+n] ? "on" : ""}" data-id="${p.id}" data-parcela="parcela${n}">${p["parcela"+n] ? "✔ Pago" : (totalCent(p) ? brl(parcelasCent(p)[n-1]) : "Pendente")}</button></td>`).join("")}
+      <td class="num">${brl(totalCent(p))}</td>
+      <td class="num">${brl(totalCent(p) - pagoCent(p))}</td>
     </tr>`).join("");
 }
 
@@ -308,6 +369,84 @@ $("bodyPag").addEventListener("click", e => {
 });
 
 $("busca").addEventListener("input", () => { if (document.activeElement === $("busca")) render(); });
+
+/* ---------- Valores por pessoa ---------- */
+[["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
+  $(id).addEventListener("input", () => {
+    valores[k] = Math.max(0, parseFloat($(id).value) || 0);
+    render();
+    clearTimeout(timers[id]);
+    timers[id] = setTimeout(() => setDoc(doc(db, COLECAO_CFG, "valores"), { [k]: valores[k] }, { merge: true })
+      .catch(() => { $("status").textContent = "⚠ Falha ao salvar valores. Verifique as regras do Firestore."; }), 500);
+  });
+});
+
+/* ---------- Exportar PDF ---------- */
+$("btnPdf").onclick = () => {
+  if (!window.jspdf) { alert("Biblioteca de PDF não carregada. Verifique a internet e tente de novo."); return; }
+  const { jsPDF } = window.jspdf;
+  const d = new jsPDF({ unit: "pt", format: "a4" });
+  const W = d.internal.pageSize.getWidth();
+  const soma = k => dados.reduce((s, p) => s + (Number(p[k]) || 0), 0);
+  const a = soma("adultos"), c1 = soma("criancas6a12"), c2 = soma("criancasAte5");
+  const prev = dados.reduce((s, p) => s + totalCent(p), 0);
+  const arr = dados.reduce((s, p) => s + pagoCent(p), 0);
+  const v = x => brl(Math.round(x * 100));
+  const cab = (titulo) => {
+    d.setFont("helvetica", "bold"); d.setFontSize(15);
+    d.text("Festa de Fim de Ano - 5ª Cia PM", 40, 44);
+    d.setFont("helvetica", "normal"); d.setFontSize(9);
+    d.text("Emitido em " + new Date().toLocaleDateString("pt-BR") + " " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), W - 40, 44, { align: "right" });
+    d.setFont("helvetica", "bold"); d.setFontSize(12);
+    d.text(titulo, 40, 70);
+    d.setFont("helvetica", "normal"); d.setFontSize(9);
+  };
+  const azul = [31, 58, 95], cinza = [225, 230, 238];
+
+  /* Página 1 – Participantes */
+  cab("1. Participantes");
+  d.text(`Valores: adulto ${v(valores.adulto)}  |  criança 6 a 12 anos ${v(valores.crianca6a12)}  |  criança até 5 anos ${v(valores.crianca5)}`, 40, 84);
+  d.text(`Total de pessoas: ${a + c1 + c2}  (${a} adultos, ${c1} crianças de 6 a 12, ${c2} crianças até 5)`, 40, 97);
+  d.autoTable({
+    startY: 108, margin: { left: 40, right: 40 },
+    head: [["Policial", "Adultos", "Crianças 6 a 12", "Crianças até 5", "Total devido"]],
+    body: dados.map(p => [`${p.posto} ${p.nome}`, p.adultos || 0, p.criancas6a12 || 0, p.criancasAte5 || 0, brl(totalCent(p))]),
+    foot: [["TOTAL", a, c1, c2, brl(prev)]],
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: azul }, footStyles: { fillColor: cinza, textColor: 20 },
+    columnStyles: { 1: { halign: "center" }, 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "right" } },
+    showFoot: "lastPage"
+  });
+
+  /* Página 2 – Pagamentos */
+  d.addPage();
+  cab("2. Pagamentos");
+  d.text(`Total previsto: ${brl(prev)}  |  Arrecadado: ${brl(arr)}  |  A receber: ${brl(prev - arr)}  |  ${prev ? Math.round(arr / prev * 100) : 0}% arrecadado`, 40, 84);
+  d.text(`Parcelas pagas: 1ª ${dados.filter(p => p.parcela1).length}  |  2ª ${dados.filter(p => p.parcela2).length}  |  3ª ${dados.filter(p => p.parcela3).length}  |  Quitados: ${dados.filter(p => p.parcela1 && p.parcela2 && p.parcela3).length}`, 40, 97);
+  d.autoTable({
+    startY: 108, margin: { left: 40, right: 40 },
+    head: [["Policial", "1ª parcela", "2ª parcela", "3ª parcela", "Total", "Pago", "Saldo"]],
+    body: dados.map(p => [`${p.posto} ${p.nome}`, p.parcela1 ? "Pago" : "-", p.parcela2 ? "Pago" : "-", p.parcela3 ? "Pago" : "-", brl(totalCent(p)), brl(pagoCent(p)), brl(totalCent(p) - pagoCent(p))]),
+    foot: [["TOTAL", "", "", "", brl(prev), brl(arr), brl(prev - arr)]],
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: azul }, footStyles: { fillColor: cinza, textColor: 20 },
+    columnStyles: { 1: { halign: "center" }, 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" } },
+    didParseCell: h => {
+      if (h.section === "body" && h.column.index >= 1 && h.column.index <= 3 && h.cell.raw === "Pago") {
+        h.cell.styles.textColor = [30, 142, 78]; h.cell.styles.fontStyle = "bold";
+      }
+    },
+    showFoot: "lastPage"
+  });
+
+  /* Numeração de páginas */
+  const n = d.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    d.setPage(i); d.setFontSize(8); d.setTextColor(120);
+    d.text(`Página ${i} de ${n}`, W / 2, d.internal.pageSize.getHeight() - 20, { align: "center" });
+  }
+  d.save("festa-fim-de-ano-5cia.pdf");
+};
 
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
