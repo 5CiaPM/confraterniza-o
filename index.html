@@ -258,7 +258,7 @@ let valoresSalvos = {};
 
 /* ---------- Auditoria ---------- */
 const ROT = { adultos: "Adultos", criancas6a12: "Crianças 6 a 12", criancasAte5: "Crianças até 5", parcela1: "1ª parcela", parcela2: "2ª parcela", parcela3: "3ª parcela" };
-const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Pago" : "Pendente") : String(v ?? 0);
+const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Falta" : "Pendente") : String(v ?? 0);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function registrar(alvo, campo, de, para){
