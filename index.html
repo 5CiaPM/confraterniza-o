@@ -88,6 +88,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="participantes">Participantes</button>
       <button class="tab" data-tab="pagamentos">Pagamentos</button>
+      <button class="tab" data-tab="auditoria">Auditoria</button>
     </div>
 
     <details class="cfg">
@@ -140,13 +141,23 @@
         </table>
       </div>
     </section>
+    <!-- ABA 3 -->
+    <section id="tab-auditoria" class="hidden">
+      <p class="hint" id="audInfo" style="margin:0 0 10px">Registro de todas as alterações: quem, quando e o que mudou.</p>
+      <div class="wrap">
+        <table style="min-width:680px">
+          <thead><tr><th>Data/hora</th><th>Usuário</th><th>Policial / item</th><th>Campo</th><th>Alteração</th></tr></thead>
+          <tbody id="bodyAud"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 </div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, doc, onSnapshot, updateDoc, setDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, updateDoc, setDoc, addDoc, serverTimestamp, query, orderBy, limit, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ====== COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE ====== */
 const firebaseConfig = {
@@ -161,6 +172,7 @@ const firebaseConfig = {
 
 const COLECAO = "festa_fim_de_ano_participantes";
 const COLECAO_CFG = "festa_fim_de_ano_config";
+const COLECAO_AUD = "festa_fim_de_ano_auditoria";
 
 const EFETIVO = [
 ["CAP PM","JOSEMAR DE PAULA"],
@@ -240,6 +252,44 @@ let dados = [];          // lista atual vinda do Firestore
 let unsub = null;
 let seeded = false;
 let unsubCfg = null;
+let unsubAud = null;
+let auditoria = [];
+let valoresSalvos = {};
+
+/* ---------- Auditoria ---------- */
+const ROT = { adultos: "Adultos", criancas6a12: "Crianças 6 a 12", criancasAte5: "Crianças até 5", parcela1: "1ª parcela", parcela2: "2ª parcela", parcela3: "3ª parcela" };
+const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Pago" : "Pendente") : String(v ?? 0);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function registrar(alvo, campo, de, para){
+  if (de === para) return;
+  addDoc(collection(db, COLECAO_AUD), {
+    data: serverTimestamp(),
+    usuario: (auth.currentUser && auth.currentUser.email) || "desconhecido",
+    alvo, campo, de, para
+  }).catch(() => { $("status").textContent = "⚠ Falha ao registrar auditoria. Verifique as regras do Firestore."; });
+}
+
+function gravarValor(k){
+  const ROTV = { adulto: "Valor adulto", crianca6a12: "Valor criança 6 a 12", crianca5: "Valor criança até 5" };
+  registrar("Valores por pessoa", ROTV[k], brl(Math.round((valoresSalvos[k] || 0) * 100)), brl(Math.round(valores[k] * 100)));
+  valoresSalvos[k] = valores[k];
+  return setDoc(doc(db, COLECAO_CFG, "valores"), { [k]: valores[k] }, { merge: true });
+}
+
+function renderAud(){
+  const q = $("busca").value.trim().toLowerCase();
+  const lista = !q ? auditoria : auditoria.filter(x => [x.usuario, x.alvo, x.campo, x.de, x.para].join(" ").toLowerCase().includes(q));
+  $("bodyAud").innerHTML = lista.map(x => `
+    <tr>
+      <td>${x.data ? x.data.toDate().toLocaleString("pt-BR") : "agora"}</td>
+      <td>${esc(x.usuario)}</td>
+      <td>${esc(x.alvo)}</td>
+      <td>${esc(x.campo)}</td>
+      <td>${esc(x.de)} → <b>${esc(x.para)}</b></td>
+    </tr>`).join("") || `<tr><td colspan="5">Nenhum registro.</td></tr>`;
+  $("audInfo").textContent = lista.length + " registro(s) — mostrando os 300 mais recentes";
+}
 let valores = { adulto: 110, crianca6a12: 55, crianca5: 0 };   // em reais, por pessoa
 
 const brl = c => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -253,7 +303,7 @@ const timers = {};
 onAuthStateChanged(auth, user => {
   $("loginView").classList.toggle("hidden", !!user);
   $("appView").classList.toggle("hidden", !user);
-  if (user) iniciar(); else { if (unsub) { unsub(); unsub = null; } if (unsubCfg) { unsubCfg(); unsubCfg = null; } }
+  if (user) iniciar(); else { if (unsub) { unsub(); unsub = null; } if (unsubCfg) { unsubCfg(); unsubCfg = null; } if (unsubAud) { unsubAud(); unsubAud = null; } }
 });
 $("btnLogin").onclick = async () => {
   $("loginErr").textContent = "";
@@ -266,9 +316,14 @@ $("btnSair").onclick = () => signOut(auth);
 /* ---------- Dados ---------- */
 function iniciar(){
   if (unsub) return;
+  unsubAud = onSnapshot(query(collection(db, COLECAO_AUD), orderBy("data", "desc"), limit(300)), snap => {
+    auditoria = snap.docs.map(d => d.data());
+    renderAud();
+  }, err => { $("status").textContent = "Erro ao ler auditoria: " + err.code + " (atualize as regras do Firestore)"; });
   unsubCfg = onSnapshot(doc(db, COLECAO_CFG, "valores"), s => {
     if (s.exists()) valores = { ...valores, ...s.data() };
-    else setDoc(doc(db, COLECAO_CFG, "valores"), valores).catch(() => {});   // grava os valores iniciais na 1ª vez
+    else setDoc(doc(db, COLECAO_CFG, "valores"), valores).catch(() => {});
+    valoresSalvos = { ...valores };   // grava os valores iniciais na 1ª vez
     [["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
       if (document.activeElement !== $(id)) $(id).value = valores[k] ?? "";
     });
@@ -297,6 +352,8 @@ async function semear(){
 }
 
 function salvar(id, campos){
+  const p0 = dados.find(x => x.id === id), k0 = Object.keys(campos)[0];
+  if (p0 && ROT[k0]) registrar(`${p0.posto} ${p0.nome}`, ROT[k0], fmtCampo(k0, p0[k0]), fmtCampo(k0, campos[k0]));
   return updateDoc(doc(db, COLECAO, id), campos)
     .catch(() => { $("status").textContent = "⚠ Falha ao salvar. Verifique a conexão."; });
 }
@@ -369,7 +426,7 @@ $("bodyPag").addEventListener("click", e => {
   salvar(p.id, { [b.dataset.parcela]: !p[b.dataset.parcela] });
 });
 
-$("busca").addEventListener("input", () => { if (document.activeElement === $("busca")) render(); });
+$("busca").addEventListener("input", () => { if (document.activeElement === $("busca")) { render(); renderAud(); } });
 
 /* ---------- Valores por pessoa ---------- */
 [["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
@@ -377,7 +434,7 @@ $("busca").addEventListener("input", () => { if (document.activeElement === $("b
     valores[k] = Math.max(0, parseFloat($(id).value) || 0);
     render();
     clearTimeout(timers[id]);
-    timers[id] = setTimeout(() => setDoc(doc(db, COLECAO_CFG, "valores"), { [k]: valores[k] }, { merge: true })
+    timers[id] = setTimeout(() => gravarValor(k)
       .catch(() => { $("status").textContent = "⚠ Falha ao salvar valores. Verifique as regras do Firestore."; }), 500);
   });
 });
@@ -453,6 +510,8 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
   $("tab-participantes").classList.toggle("hidden", t.dataset.tab !== "participantes");
   $("tab-pagamentos").classList.toggle("hidden", t.dataset.tab !== "pagamentos");
+  $("tab-auditoria").classList.toggle("hidden", t.dataset.tab !== "auditoria");
+  renderAud();
   render();
 });
 </script>

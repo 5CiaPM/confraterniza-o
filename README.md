@@ -21,6 +21,13 @@ service cloud.firestore {
     match /festa_fim_de_ano_config/{doc} {
       allow read, write: if request.auth != null;
     }
+    // Auditoria: só cria e lê; ninguém edita nem apaga registros
+    match /festa_fim_de_ano_auditoria/{doc} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.usuario == request.auth.token.email;
+      allow update, delete: if false;
+    }
   }
 }
 ```
@@ -42,4 +49,5 @@ service cloud.firestore {
 - **Pagamentos**: toque em "Pendente" para marcar a parcela como "Pago" (toque de novo para desfazer).
 - **Valores por pessoa**: no painel "Valores por pessoa" informe o valor do adulto, da criança de 6 a 12 e da criança até 5 anos. O total de cada policial é dividido em 3 parcelas iguais e o indicador de **arrecadado / a receber** (com barra de progresso) é atualizado a cada parcela marcada como paga.
 - **Exportar PDF**: o botão no topo gera um PDF com a lista de participantes (página 1) e os pagamentos com saldo (página 2).
+- **Auditoria**: a aba "Auditoria" lista, do mais recente ao mais antigo, quem alterou o quê e quando (e-mail do usuário, policial, campo, valor anterior → novo valor), incluindo mudanças nos valores por pessoa. Para a auditoria identificar cada pessoa, crie **um usuário (e-mail) para cada administrador** no Firebase Authentication. Os registros não podem ser editados nem apagados pelo app (regras acima).
 - O campo de busca filtra as duas abas; os cartões do topo mostram os totais.
