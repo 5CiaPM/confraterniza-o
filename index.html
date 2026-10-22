@@ -58,10 +58,16 @@
   .money b{color:var(--ok)}
   .bar{height:12px;border-radius:999px;background:var(--line);overflow:hidden;margin:6px 0 4px}
   #barFill{height:100%;width:0;background:var(--ok);transition:width .3s}
-  #tab-pagamentos table{min-width:700px}
+  #tab-pagamentos table{min-width:760px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:16px;z-index:50}
+  .modal .mbox{background:var(--card);border-radius:14px;max-width:520px;width:100%;padding:12px}
+  .modal .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .modal .acts .btn{flex:1;min-width:130px}
+  .btn.sec{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -80,6 +86,7 @@
   <header>
     <h1>🎄 Festa de Fim de Ano – 5ª Cia PM<small id="status" class="status">Conectando…</small></h1>
     <div class="hbtns">
+      <button class="btn pdf" id="btnZip">🖼 Cartões (imagens)</button>
       <button class="btn pdf" id="btnPdf">📄 Exportar PDF</button>
       <button class="btn ghost" id="btnSair">Sair</button>
     </div>
@@ -97,6 +104,7 @@
         <label>Adulto (R$)<input id="vAdulto" type="number" min="0" step="0.01" inputmode="decimal"></label>
         <label>Criança 6 a 12 (R$)<input id="vC612" type="number" min="0" step="0.01" inputmode="decimal"></label>
         <label>Criança até 5 (R$)<input id="vC5" type="number" min="0" step="0.01" inputmode="decimal"></label>
+        <label>Chave PIX (aparece no cartão)<input id="vPix" type="text" style="width:200px" placeholder="CPF, celular, e-mail…"></label>
       </div>
       <p class="hint">O total de cada policial é dividido em 3 parcelas iguais. Considere o próprio policial no campo "Adultos".</p>
     </details>
@@ -136,7 +144,7 @@
       </div>
       <div class="wrap">
         <table>
-          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th><th class="num">Total</th><th class="num">Falta</th></tr></thead>
+          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th><th class="num">Total</th><th class="num">Saldo</th><th class="num">Cartão</th></tr></thead>
           <tbody id="bodyPag"></tbody>
         </table>
       </div>
@@ -152,6 +160,18 @@
       </div>
     </section>
   </main>
+</div>
+
+<!-- MODAL DO CARTÃO -->
+<div id="modal" class="modal hidden">
+  <div class="mbox">
+    <div id="cartaoBox"></div>
+    <div class="acts">
+      <button class="btn" id="cImg">⬇ Baixar imagem</button>
+      <button class="btn" id="cShare">📤 Compartilhar</button>
+      <button class="btn sec" id="cFechar">Fechar</button>
+    </div>
+  </div>
 </div>
 
 <script type="module">
@@ -258,7 +278,7 @@ let valoresSalvos = {};
 
 /* ---------- Auditoria ---------- */
 const ROT = { adultos: "Adultos", criancas6a12: "Crianças 6 a 12", criancasAte5: "Crianças até 5", parcela1: "1ª parcela", parcela2: "2ª parcela", parcela3: "3ª parcela" };
-const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Falta" : "Pendente") : String(v ?? 0);
+const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Pago" : "Pendente") : String(v ?? 0);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function registrar(alvo, campo, de, para){
@@ -290,7 +310,8 @@ function renderAud(){
     </tr>`).join("") || `<tr><td colspan="5">Nenhum registro.</td></tr>`;
   $("audInfo").textContent = lista.length + " registro(s) — mostrando os 300 mais recentes";
 }
-let valores = { adulto: 110, crianca6a12: 55, crianca5: 0 };   // em reais, por pessoa
+const PIX_PADRAO = "301.606.768-43";   // chave PIX (CPF) usada nos cartões
+let valores = { adulto: 110, crianca6a12: 55, crianca5: 0, pix: PIX_PADRAO };   // em reais, por pessoa
 
 const brl = c => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 // tudo em centavos para evitar erro de arredondamento
@@ -323,7 +344,9 @@ function iniciar(){
   unsubCfg = onSnapshot(doc(db, COLECAO_CFG, "valores"), s => {
     if (s.exists()) valores = { ...valores, ...s.data() };
     else setDoc(doc(db, COLECAO_CFG, "valores"), valores).catch(() => {});
-    valoresSalvos = { ...valores };   // grava os valores iniciais na 1ª vez
+    if (/x{4}/i.test(valores.pix || "")) valores.pix = PIX_PADRAO;   // ignora o texto de exemplo antigo
+    valoresSalvos = { ...valores };
+    if (document.activeElement !== $("vPix")) $("vPix").value = valores.pix ?? "";   // grava os valores iniciais na 1ª vez
     [["vAdulto","adulto"],["vC612","crianca6a12"],["vC5","crianca5"]].forEach(([id, k]) => {
       if (document.activeElement !== $(id)) $(id).value = valores[k] ?? "";
     });
@@ -405,6 +428,7 @@ function render(){
         `<td class="num"><button class="pay ${p["parcela"+n] ? "on" : ""}" data-id="${p.id}" data-parcela="parcela${n}">${p["parcela"+n] ? "✔ Pago" : (totalCent(p) ? brl(parcelasCent(p)[n-1]) : "Pendente")}</button></td>`).join("")}
       <td class="num">${brl(totalCent(p))}</td>
       <td class="num">${brl(totalCent(p) - pagoCent(p))}</td>
+      <td class="num"><button class="pay" data-cartao="${p.id}">💳 Gerar</button></td>
     </tr>`).join("");
 }
 
@@ -438,6 +462,183 @@ $("busca").addEventListener("input", () => { if (document.activeElement === $("b
       .catch(() => { $("status").textContent = "⚠ Falha ao salvar valores. Verifique as regras do Firestore."; }), 500);
   });
 });
+
+/* ---------- Chave PIX ---------- */
+$("vPix").addEventListener("input", () => {
+  valores.pix = $("vPix").value.trim();
+  clearTimeout(timers.pix);
+  timers.pix = setTimeout(() => {
+    registrar("Valores por pessoa", "Chave PIX", valoresSalvos.pix || "", valores.pix);
+    valoresSalvos.pix = valores.pix;
+    setDoc(doc(db, COLECAO_CFG, "valores"), { pix: valores.pix }, { merge: true })
+      .catch(() => { $("status").textContent = "⚠ Falha ao salvar a chave PIX."; });
+  }, 600);
+});
+
+/* ---------- Cartão de pagamento ---------- */
+const VENCS = ["09/11", "07/12", "18/12 13º Salário"];     // vencimentos das 3 parcelas (à vista = 1º vencimento)
+const CARD_W = 1080, CARD_H = 1660;
+
+function quebra(g, texto, maxW, font){
+  g.font = font;
+  const linhas = []; let atual = "";
+  for (const palavra of texto.split(" ")) {
+    const teste = atual ? atual + " " + palavra : palavra;
+    if (g.measureText(teste).width > maxW && atual) { linhas.push(atual); atual = palavra; } else atual = teste;
+  }
+  if (atual) linhas.push(atual);
+  return linhas.slice(0, 3);
+}
+
+function desenharCartao(p){
+  const W = CARD_W, H = CARD_H;
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const OURO = "#d9a93f", VERM = "#b3121b", VERDE = "#4fd37f", PAINEL = "#17171b";
+  const F = (peso, px, estilo = "") => `${estilo} ${peso} ${px}px "Segoe UI", Arial, sans-serif`.trim();
+  const T = (s, x, y, font, cor, al = "left") => { g.font = font; g.fillStyle = cor; g.textAlign = al; g.textBaseline = "alphabetic"; g.fillText(s, x, y); };
+  const caixa = (x, y, w, h, fill, stroke, r = 18) => {
+    g.beginPath(); g.roundRect(x, y, w, h, r);
+    if (fill) { g.fillStyle = fill; g.fill(); }
+    if (stroke) { g.strokeStyle = stroke; g.lineWidth = 3; g.stroke(); }
+  };
+  const R = x => brl(Math.round(x * 100));
+
+  const ad = Number(p.adultos) || 0, c1 = Number(p.criancas6a12) || 0, c2 = Number(p.criancasAte5) || 0;
+  const total = totalCent(p), parc = parcelasCent(p);
+  const quitado = total > 0 && p.parcela1 && p.parcela2 && p.parcela3;
+  const pix = valores.pix || PIX_PADRAO;
+
+  // fundo
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#2a160d"); bg.addColorStop(1, "#0a0a0c");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  caixa(18, 18, W - 36, H - 36, null, OURO, 28);
+
+  // cabeçalho
+  T("CONFRATERNIZAÇÃO", W / 2, 112, F("bold", 70), OURO, "center");
+  T("DE FIM DE ANO DA 5ª CIA PM", W / 2, 176, F("bold", 46), "#ffffff", "center");
+  T("POLICIAL MILITAR E FAMÍLIA", W / 2, 224, F("normal", 26), "#c9c9c9", "center");
+
+  // data / hora / local
+  caixa(60, 255, W - 120, 70, "#121216", OURO);
+  T("20/12/26 · DOMINGO   |   12h   |   ESPETARIA E BUFFET GILBERTO", W / 2, 300, F("bold", 27), "#ffffff", "center");
+
+  // título
+  g.fillStyle = OURO; g.fillRect(60, 385, 240, 3); g.fillRect(W - 300, 385, 240, 3);
+  T("CARTÃO DE PAGAMENTO", W / 2, 397, F("bold", 40), OURO, "center");
+
+  // policial
+  let y = 425;
+  const linhas = quebra(g, p.nome, W - 160, F("bold", 42));
+  const hPol = 70 + linhas.length * 50;
+  caixa(60, y, W - 120, hPol, PAINEL, OURO);
+  T(p.posto, 90, y + 46, F("bold", 30), OURO);
+  linhas.forEach((l, i) => T(l, 90, y + 96 + i * 50, F("bold", 42), "#ffffff"));
+  y += hPol + 35;
+
+  // participantes
+  const itens = [];
+  if (ad) itens.push([`Adultos: ${ad} × ${R(valores.adulto)}`, R(ad * valores.adulto)]);
+  if (c1) itens.push([`Crianças de 6 a 12 anos: ${c1} × ${R(valores.crianca6a12)}`, R(c1 * valores.crianca6a12)]);
+  if (c2) itens.push([`Crianças até 5 anos: ${c2}`, valores.crianca5 > 0 ? R(c2 * valores.crianca5) : "Isento"]);
+  if (!itens.length) itens.push(["Nenhum participante informado", "—"]);
+  itens.forEach(([l, v], i) => {
+    T(l, 90, y + 30 + i * 48, F("normal", 30), "#e8e8e8");
+    T(v, W - 90, y + 30 + i * 48, F("bold", 30), OURO, "right");
+  });
+  y += itens.length * 48 + 10;
+
+  // total
+  caixa(60, y, W - 120, 110, VERM);
+  T("TOTAL A PAGAR", 95, y + 66, F("bold", 32), "#ffffff");
+  if (quitado) T("✔ QUITADO", 95, y + 98, F("bold", 24), "#ffffff");
+  T(brl(total), W - 95, y + 78, F("bold", 62), "#ffffff", "right");
+  y += 110 + 45;
+
+  // formas de pagamento
+  T("FORMAS DE PAGAMENTO", W / 2, y, F("bold", 34), OURO, "center");
+  y += 25;
+
+  caixa(60, y, W - 120, 105, PAINEL, OURO);
+  T("À VISTA", 90, y + 48, F("bold", 34), "#ffffff");
+  T(`pagamento até ${VENCS[0]}`, 90, y + 86, F("normal", 24), "#b8b8b8");
+  T(brl(total), W - 90, y + 68, F("bold", 50), OURO, "right");
+  y += 105 + 25;
+
+  caixa(60, y, W - 120, 256, PAINEL, OURO);
+  T("PARCELADO EM 3X", 90, y + 50, F("bold", 34), "#ffffff");
+  [0, 1, 2].forEach(i => {
+    const yy = y + 108 + i * 62;
+    T(`${i + 1}ª parcela · ${VENCS[i]}`, 90, yy, F("normal", 30), "#e8e8e8");
+    if (p["parcela" + (i + 1)]) T("✔ PAGO", W - 300, yy, F("bold", 28), VERDE, "right");
+    T(brl(parc[i]), W - 90, yy, F("bold", 34), OURO, "right");
+  });
+  y += 256 + 30;
+
+  // PIX
+  caixa(60, y, W - 120, 140, "#101a14", VERDE);
+  T("PAGAMENTO VIA PIX · CPF", W / 2, y + 44, F("bold", 26), "#b8e8c8", "center");
+  T(pix, W / 2, y + 112, F("bold", 64), "#ffffff", "center");
+  y += 140 + 45;
+
+  T("Contamos com a presença de todos!", W / 2, y, F("normal", 30, "italic"), OURO, "center");
+  return c;
+}
+
+const slug = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+let cartaoAtual = null;
+
+function abrirCartao(id){
+  const p = dados.find(x => x.id === id);
+  if (!p) return;
+  const canvas = desenharCartao(p);
+  cartaoAtual = { p, canvas };
+  canvas.style.cssText = "width:100%;height:auto;border-radius:10px;display:block";
+  $("cartaoBox").replaceChildren(canvas);
+  $("modal").classList.remove("hidden");
+}
+
+function baixar(href, nome){ const a = document.createElement("a"); a.href = href; a.download = nome; a.click(); }
+
+$("bodyPag").addEventListener("click", e => {
+  const b = e.target.closest("button[data-cartao]");
+  if (b) abrirCartao(b.dataset.cartao);
+});
+$("cFechar").onclick = () => $("modal").classList.add("hidden");
+$("modal").addEventListener("click", e => { if (e.target === $("modal")) $("modal").classList.add("hidden"); });
+
+$("cImg").onclick = () => baixar(cartaoAtual.canvas.toDataURL("image/png"), `cartao-${slug(cartaoAtual.p.nome)}.png`);
+
+$("cShare").onclick = () => {
+  const { p, canvas } = cartaoAtual;
+  canvas.toBlob(async blob => {
+    const arq = new File([blob], `cartao-${slug(p.nome)}.png`, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [arq] })) {
+      try { await navigator.share({ files: [arq], title: "Cartão de pagamento - Confraternização 5ª Cia PM" }); } catch (e) { /* cancelado */ }
+    } else baixar(URL.createObjectURL(blob), arq.name);
+  }, "image/png");
+};
+
+/* ---------- Todos os cartões como imagens individuais (ZIP) ---------- */
+$("btnZip").onclick = async () => {
+  if (!window.JSZip) { alert("Biblioteca de ZIP não carregada. Verifique a internet e tente de novo."); return; }
+  const lista = dados.filter(p => totalCent(p) > 0);
+  if (!lista.length) { alert("Nenhum policial com valor a pagar. Preencha os participantes primeiro."); return; }
+  const btn = $("btnZip"), txt = btn.textContent;
+  btn.disabled = true;
+  const zip = new JSZip();
+  for (let i = 0; i < lista.length; i++) {
+    btn.textContent = `Gerando ${i + 1}/${lista.length}…`;
+    await new Promise(r => setTimeout(r));
+    const blob = await new Promise(r => desenharCartao(lista[i]).toBlob(r, "image/png"));
+    zip.file(`${String(i + 1).padStart(2, "0")}-cartao-${slug(lista[i].nome)}.png`, blob);
+  }
+  btn.textContent = "Compactando…";
+  const out = await zip.generateAsync({ type: "blob" });
+  baixar(URL.createObjectURL(out), "cartoes-pagamento-5cia.zip");
+  btn.textContent = txt; btn.disabled = false;
+};
 
 /* ---------- Exportar PDF ---------- */
 $("btnPdf").onclick = () => {
