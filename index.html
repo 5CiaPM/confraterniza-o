@@ -58,7 +58,8 @@
   .money b{color:var(--ok)}
   .bar{height:12px;border-radius:999px;background:var(--line);overflow:hidden;margin:6px 0 4px}
   #barFill{height:100%;width:0;background:var(--ok);transition:width .3s}
-  #tab-pagamentos table{min-width:760px}
+  #tab-pagamentos table{min-width:960px}
+  input.obs{width:100%;min-width:160px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;font-size:.85rem}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:16px;z-index:50}
   .modal .mbox{background:var(--card);border-radius:14px;max-width:520px;width:100%;padding:12px}
   .modal .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
@@ -144,7 +145,7 @@
       </div>
       <div class="wrap">
         <table>
-          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th><th class="num">Total</th><th class="num">Saldo</th><th class="num">Cartão</th></tr></thead>
+          <thead><tr><th>Policial</th><th class="num">1ª parcela</th><th class="num">2ª parcela</th><th class="num">3ª parcela</th><th class="num">Total</th><th class="num">Saldo</th><th class="num">Cartão</th><th>Observações</th></tr></thead>
           <tbody id="bodyPag"></tbody>
         </table>
       </div>
@@ -277,8 +278,8 @@ let auditoria = [];
 let valoresSalvos = {};
 
 /* ---------- Auditoria ---------- */
-const ROT = { adultos: "Adultos", criancas6a12: "Crianças 6 a 12", criancasAte5: "Crianças até 5", parcela1: "1ª parcela", parcela2: "2ª parcela", parcela3: "3ª parcela" };
-const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Pago" : "Pendente") : String(v ?? 0);
+const ROT = { adultos: "Adultos", criancas6a12: "Crianças 6 a 12", criancasAte5: "Crianças até 5", parcela1: "1ª parcela", parcela2: "2ª parcela", parcela3: "3ª parcela", obs: "Observação" };
+const fmtCampo = (k, v) => k.startsWith("parcela") ? (v ? "Pago" : "Pendente") : k === "obs" ? (v ? String(v) : "(vazio)") : String(v ?? 0);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function registrar(alvo, campo, de, para){
@@ -421,7 +422,8 @@ function render(){
       </tr>`).join("");
   }
 
-  $("bodyPag").innerHTML = lista.map(p => `
+  const digitandoObs = foco && foco.tagName === "INPUT" && foco.dataset.obs;
+  if (!digitandoObs) $("bodyPag").innerHTML = lista.map(p => `
     <tr>
       <td><span class="posto">${p.posto}</span>${p.nome}</td>
       ${[1,2,3].map(n =>
@@ -429,6 +431,7 @@ function render(){
       <td class="num">${brl(totalCent(p))}</td>
       <td class="num">${brl(totalCent(p) - pagoCent(p))}</td>
       <td class="num"><button class="pay" data-cartao="${p.id}">💳 Gerar</button></td>
+      <td><input type="text" class="obs" maxlength="200" placeholder="Observação" value="${esc(p.obs || "")}" data-id="${p.id}" data-obs="1"></td>
     </tr>`).join("");
 }
 
@@ -442,6 +445,15 @@ $("bodyPart").addEventListener("input", e => {
   timers[key] = setTimeout(() => salvar(el.dataset.id, { [el.dataset.campo]: valor }), 400);
 });
 $("bodyPart").addEventListener("focusout", () => setTimeout(render, 450));
+
+$("bodyPag").addEventListener("input", e => {
+  const el = e.target;
+  if (!el.dataset.obs) return;
+  const key = el.dataset.id + "obs";
+  clearTimeout(timers[key]);
+  timers[key] = setTimeout(() => salvar(el.dataset.id, { obs: el.value.trim() }), 600);
+});
+$("bodyPag").addEventListener("focusout", e => { if (e.target.dataset && e.target.dataset.obs) setTimeout(render, 700); });
 
 $("bodyPag").addEventListener("click", e => {
   const b = e.target.closest("button[data-parcela]");
@@ -684,9 +696,9 @@ $("btnPdf").onclick = () => {
   d.text(`Parcelas pagas: 1ª ${dados.filter(p => p.parcela1).length}  |  2ª ${dados.filter(p => p.parcela2).length}  |  3ª ${dados.filter(p => p.parcela3).length}  |  Quitados: ${dados.filter(p => p.parcela1 && p.parcela2 && p.parcela3).length}`, 40, 97);
   d.autoTable({
     startY: 108, margin: { left: 40, right: 40 },
-    head: [["Policial", "1ª parcela", "2ª parcela", "3ª parcela", "Total", "Pago", "Saldo"]],
-    body: dados.map(p => [`${p.posto} ${p.nome}`, p.parcela1 ? "Pago" : "-", p.parcela2 ? "Pago" : "-", p.parcela3 ? "Pago" : "-", brl(totalCent(p)), brl(pagoCent(p)), brl(totalCent(p) - pagoCent(p))]),
-    foot: [["TOTAL", "", "", "", brl(prev), brl(arr), brl(prev - arr)]],
+    head: [["Policial", "1ª parcela", "2ª parcela", "3ª parcela", "Total", "Pago", "Saldo", "Observações"]],
+    body: dados.map(p => [`${p.posto} ${p.nome}`, p.parcela1 ? "Pago" : "-", p.parcela2 ? "Pago" : "-", p.parcela3 ? "Pago" : "-", brl(totalCent(p)), brl(pagoCent(p)), brl(totalCent(p) - pagoCent(p)), p.obs || ""]),
+    foot: [["TOTAL", "", "", "", brl(prev), brl(arr), brl(prev - arr), ""]],
     styles: { fontSize: 8, cellPadding: 3 },
     headStyles: { fillColor: azul }, footStyles: { fillColor: cinza, textColor: 20 },
     columnStyles: { 1: { halign: "center" }, 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" } },
